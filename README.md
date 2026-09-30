@@ -2,9 +2,9 @@
 
 **An agentic tool-calling system that routes support tickets — not just answers them.**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mistyvisty/support-triage-agent/blob/main/Support_Triage_Agent.ipynb)
+🔗 **[Live demo →](https://support-triage-agent-3rdpekkbtyma2bhjafya9z.streamlit.app/)**  ·  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mistyvisty/support-triage-agent/blob/main/Support_Triage_Agent.ipynb)
 
-> Built by [Preeti Bhardwaj](https://mistyvisty.github.io/) · Stack: Python · Groq SDK (native tool-calling) · FAISS · MiniLM · Groq LLaMA 3.3-70B
+> Built by [Preeti Bhardwaj](https://mistyvisty.github.io/) · Stack: Python · Groq SDK (native tool-calling) · FAISS · MiniLM · Streamlit
 
 ---
 
@@ -18,6 +18,24 @@ The agent can:
 - ✅ **Draft a response** — when the knowledge base clearly covers the question
 - 🚨 **Escalate to a human team** — when KB coverage is weak, confidence is low, or the ticket matches a policy trigger (security lockouts, legal/GDPR requests)
 - ❓ **Ask a clarifying question** — when the ticket is too vague to classify or resolve
+
+---
+
+## 🕹️ Try it
+
+**[Open the live app](https://support-triage-agent-3rdpekkbtyma2bhjafya9z.streamlit.app/)** and pick a sample ticket, or write your own:
+
+| Sample | Expected behavior |
+|---|---|
+| Simple question | Draft a reply, grounded in a KB article |
+| Security lockout | Escalate to `security` |
+| Legal / GDPR | Escalate to `legal_privacy` |
+| Vague | Ask a clarifying question |
+| Not in the KB | Escalate instead of inventing an answer |
+
+The app also shows the help articles the agent retrieved, and flags when the code policy guard overrode the model.
+
+> The live app runs on a free tier, so it may take a minute to wake up, and it can hit a daily request limit.
 
 ---
 
@@ -35,24 +53,30 @@ Incoming Ticket (text)
         ▼
  ┌─────────────────────┐
  │  2. Agent Decision  │  Native tool-calling (Groq function-calling API,
- │  (LLaMA 3.3-70B)    │  tool_choice="required"). Model must call exactly
+ │  (Groq LLM)         │  tool_choice="required"). Model must call exactly
  │                     │  ONE of three tools, based on:
  │                     │  - Retrieved context quality
- │                     │  - Policy rules in the system prompt
+ │                     │  - Rules in the system prompt
  │                     │  - Ticket clarity
  └─────────────────────┘
         │
         ▼
- Structured Output: { action, args, retrieved_docs, retrieval_top_distance }
+ ┌─────────────────────┐
+ │  3. Policy Guard    │  Plain code (regex), not a prompt. Security and
+ │  (code)             │  legal tickets are ALWAYS escalated, even if the
+ └─────────────────────┘  model chose otherwise. The model's original
+        │                 choice is kept for the audit trail.
+        ▼
+ Structured Output: { action, args, model_action, policy_override, retrieved }
 ```
 
-### Why a fixed two-step pipeline?
+### Why a fixed pipeline?
 
 Retrieval is deterministic; the decision is agentic. Letting the model decide *whether* to search adds risk for no real benefit, while letting it decide *what to do with* the results is where the real reasoning value is.
 
 ### Policy rules for high-stakes tickets
 
-Two categories must **always** be escalated, and the system prompt instructs the model to do so regardless of how confident it feels:
+Two categories must **always** be escalated. This is enforced twice: the system prompt tells the model to do it, and a code-level guard checks the ticket text afterwards so a model mistake can't skip it.
 
 | Trigger | Team | Why it's a must-escalate |
 |---|---|---|
@@ -61,11 +85,13 @@ Two categories must **always** be escalated, and the system prompt instructs the
 
 This follows the same principle as my [PCOS × Neurodivergence RAG](https://github.com/mistyvisty/pcos-neurodivergence-rag) project: refuse instead of guess when the cost of a wrong answer is too high.
 
+The system prompt also requires that every claim in a drafted reply come directly from the retrieved KB text. If the reply would need facts that aren't in the KB, the agent escalates instead.
+
 ---
 
 ## 📊 Evaluation Results
 
-Ran against a hand-labeled set of 21 support tickets across all three action types.
+Ran against a hand-labeled set of 21 support tickets across all three action types, using the original notebook (Groq LLaMA 3.3-70B, before the code policy guard and the grounding rule).
 
 | Metric | Score |
 |---|---|
@@ -88,9 +114,13 @@ The other 2 were out-of-KB tickets (not security/legal) that should have been es
 
 **The high-stakes metric is what matters most here.** All 6 security and legal tickets were escalated. A wrong `draft_response` on "what's the API rate limit?" is annoying; a wrong `draft_response` on a legal threat or security lockout is a serious production failure. The system's errors fall on the low-cost side: it never under-escalated a high-stakes ticket.
 
-### Next step: fixing over-clarification
+### What changed since these numbers
 
-The planned fix is one explicit instruction in the system prompt: *"If retrieved KB context directly and clearly covers the question, call `draft_response`; only use `ask_clarifying_question` when the ticket is genuinely ambiguous."* The eval harness will measure whether it improves `draft_response` accuracy without lowering must-escalate recall.
+- Added the **code policy guard** (security/legal escalation no longer depends on model judgment).
+- Added a **grounding rule** after the live app drafted a confident reply to an out-of-KB ticket using details that weren't in the knowledge base.
+- The live app now runs `openai/gpt-oss-120b` on Groq, because `llama-3.3-70b-versatile` was no longer available on my account.
+
+These numbers have **not** been re-measured on the new setup. Re-running `python eval.py` is next, and this table will be updated with the results, whether or not they look better.
 
 ---
 
@@ -98,9 +128,10 @@ The planned fix is one explicit instruction in the system prompt: *"If retrieved
 
 | Component | Tool | Why |
 |---|---|---|
-| LLM + tool-calling | Groq LLaMA 3.3-70B | Fast inference, native OpenAI-compatible function-calling |
+| LLM + tool-calling | Groq (LLaMA 3.3-70B in the notebook, `gpt-oss-120b` in the live app) | Fast inference, native OpenAI-compatible function-calling |
 | Embeddings | HuggingFace MiniLM-L6-v2 | Lightweight, fast, no API cost |
 | Vector search | FAISS | In-memory, low-latency, right-sized for this KB |
+| Web app | Streamlit | Quick to build and free to host |
 | Orchestration | Python + Groq SDK | Intentionally minimal — no agent framework, so the tool-calling mechanics are fully visible |
 | Notebook | Google Colab | Reproducible, no local setup required |
 
@@ -108,6 +139,21 @@ The planned fix is one explicit instruction in the system prompt: *"If retrieved
 
 ## 🚀 How to run
 
+### Live app
+Open the [live demo](https://support-triage-agent-3rdpekkbtyma2bhjafya9z.streamlit.app/).
+
+### Locally
+```bash
+git clone https://github.com/mistyvisty/support-triage-agent.git
+cd support-triage-agent
+pip install -r requirements.txt
+export GROQ_API_KEY="your_key_here"   # free at console.groq.com
+streamlit run app.py
+```
+
+To run the evaluation harness: `python eval.py`
+
+### In Colab
 1. Click **Open in Colab** above
 2. Run Section 1 — it will prompt you for a Groq API key (free at [console.groq.com](https://console.groq.com))
 3. Run all sections top to bottom
@@ -120,7 +166,12 @@ The planned fix is one explicit instruction in the system prompt: *"If retrieved
 
 ```
 support-triage-agent/
-├── Support_Triage_Agent.ipynb   # Main notebook — KB, agent loop, eval harness
+├── app.py                       # Streamlit web app
+├── agent.py                     # Tool schemas, system prompt, policy guard, run_agent()
+├── kb.py                        # Knowledge base + FAISS retrieval
+├── eval.py                      # Evaluation harness (21 labeled tickets)
+├── Support_Triage_Agent.ipynb   # Original notebook — KB, agent loop, eval
+├── requirements.txt
 └── README.md
 ```
 
@@ -128,15 +179,17 @@ support-triage-agent/
 
 ## ⚠️ Limitations
 
-- **Policy rules are prompt-enforced**, not code-enforced — an unusually phrased security or legal ticket could slip past
+- **Policy guard uses keyword rules.** It is enforced in code, but an unusually phrased security or legal ticket that avoids the keywords could still slip past it.
 - **Small eval set** (21 tickets), so per-class accuracy can swing a lot from one or two tickets
 - **Synthetic, hand-labeled data** — tickets and labels were written by one person; a production system would validate on real historical tickets with multiple labelers
 - **Small hand-built knowledge base** (14 docs), not real support documentation
 - **One tool call per ticket** and no conversation memory — `ask_clarifying_question` ends the interaction instead of continuing it
+- **Metrics predate the current setup** (see "What changed since these numbers")
 
 ## 🔧 What I'd build next
 
-- A code-level policy check that runs before the LLM, so security/legal escalation never depends on model judgment
+- Re-run the eval on the current model and prompt, and update the results above
+- Replace keyword rules with a small classifier, or combine both, for the policy check
 - Multi-turn handling, so a clarifying question continues the loop when the customer replies
 - Confidence calibration — compare the model's self-reported `confidence` against actual correctness
 
@@ -146,6 +199,7 @@ support-triage-agent/
 
 - **Real tool-calling** — the model explicitly selects from a defined function set, not free text that gets parsed afterward
 - **Grounding by design** — retrieval is always done by code before the model decides anything
+- **Safety in code, not just prompts** — high-stakes escalation is checked by a rule the model can't skip
 - **A genuine eval harness** — labeled tickets, real metrics, and two separate scoring criteria chosen because they're not equally important
 - **Honest iteration** — the 57.1% overall accuracy is documented and diagnosed, not hidden. Understanding *why* a system fails is the actual engineering skill.
 
