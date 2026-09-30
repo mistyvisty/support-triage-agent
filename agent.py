@@ -13,7 +13,7 @@ import re
 
 from kb import search_knowledge_base
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 
 # Tool schema in Groq's native function-calling format (OpenAI-compatible)
 TOOLS = [
