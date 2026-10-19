@@ -91,36 +91,43 @@ The system prompt also requires that every claim in a drafted reply come directl
 
 ## 📊 Evaluation Results
 
-Ran against a hand-labeled set of 21 support tickets across all three action types, using the original notebook (Groq LLaMA 3.3-70B, before the code policy guard and the grounding rule).
+Re-run on an expanded set of **64 labeled tickets** (up from the original 21), on `openai/gpt-oss-120b` via Groq, with the code policy guard and grounding rule in place. The expansion specifically adds **adversarial tickets**: security/legal escalations phrased *without* the guard's exact trigger words, and tickets that mention a trigger word (lawyer, 2FA, data breach) but aren't actually hard-trigger situations — a stress test for whether the guard generalizes past its literal keyword list.
 
 | Metric | Score |
 |---|---|
-| **Must-escalate recall** (security/legal tickets) | **100%** (6/6) |
-| Overall routing accuracy | 57.1% (12/21) |
+| **Must-escalate recall** (security/legal tickets) | **100%** (0 missed) |
+| Overall routing accuracy | 85.9% (55/64) |
+| False escalations (alert-fatigue risk) | 3/64 |
+| Mean cost-weighted error per ticket | 0.41 |
 
 **Breakdown by action type:**
 
 | Expected Action | Accuracy | n |
 |---|---|---|
-| `ask_clarifying_question` | 100% | 4 |
-| `escalate` | 77.8% | 9 |
-| `draft_response` | 12.5% | 8 |
+| `ask_clarifying_question` | 100% | 10 |
+| `draft_response` | 88.0% | 25 |
+| `escalate` | 79.3% | 29 |
 
-### Honest diagnosis of the 57.1%
+### Cost-weighted scoring, not just accuracy/recall
 
-7 of the 9 misclassifications are the same error: the model treated clear, KB-covered questions as ambiguous and asked a clarifying question instead of drafting a response. This is a known LLM behavior — cautious rules that are correct for security/legal cases generalizing too broadly to straightforward factual queries.
+Not all errors cost the same. A missed hard-trigger escalation (security/legal) is a safety-critical failure; a false escalation just costs a human's attention (alert fatigue) — cheaper, but not free. `eval.py` now scores each ticket with that asymmetry built in (10 points for a missed hard escalation, 3 for a missed low-stakes escalation, 2 for a false escalation, 1 for other mix-ups), rather than treating every wrong answer the same.
 
-The other 2 were out-of-KB tickets (not security/legal) that should have been escalated but weren't.
+### Honest diagnosis of the 9 misclassifications
 
-**The high-stakes metric is what matters most here.** All 6 security and legal tickets were escalated. A wrong `draft_response` on "what's the API rate limit?" is annoying; a wrong `draft_response` on a legal threat or security lockout is a serious production failure. The system's errors fall on the low-cost side: it never under-escalated a high-stakes ticket.
+- **3 false escalations**: tickets that merely *mention* a trigger-adjacent word (a lawyer joke, 2FA sync question, a "totally different company" data breach) got escalated when they should have been drafted. This is the guard erring toward caution — safer than the alternative, but it is the real alert-fatigue cost, not a hidden one.
+- **6 missed low-stakes escalations**: billing disputes and out-of-KB requests (SSO, custom integrations) that the model answered or asked about instead of escalating. None of these were security or legal tickets.
 
-### What changed since these numbers
+**Zero of the 9 errors touched a hard-trigger ticket.** Every security and legal case in the 64-ticket set — including the adversarially-phrased ones — was escalated correctly. The system's errors stay on the low-cost side of the cost matrix.
+
+### What changed since the original 57.1%/21-ticket numbers
 
 - Added the **code policy guard** (security/legal escalation no longer depends on model judgment).
 - Added a **grounding rule** after the live app drafted a confident reply to an out-of-KB ticket using details that weren't in the knowledge base.
-- The live app now runs `openai/gpt-oss-120b` on Groq, because `llama-3.3-70b-versatile` was no longer available on my account.
+- Switched to `openai/gpt-oss-120b` on Groq, because `llama-3.3-70b-versatile` was no longer available on my account.
+- Expanded the eval set from 21 to 64 tickets, with adversarial phrasing added specifically to stress-test the guard beyond its literal keywords.
+- Added cost-weighted scoring.
 
-These numbers have **not** been re-measured on the new setup. Re-running `python eval.py` is next, and this table will be updated with the results, whether or not they look better.
+This set is still synthetic and hand-labeled by one person — a few hundred real adversarial tickets, reviewed against actual historical traffic, is the next honest step up from here.
 
 ---
 
@@ -128,7 +135,7 @@ These numbers have **not** been re-measured on the new setup. Re-running `python
 
 | Component | Tool | Why |
 |---|---|---|
-| LLM + tool-calling | Groq (LLaMA 3.3-70B in the notebook, `gpt-oss-120b` in the live app) | Fast inference, native OpenAI-compatible function-calling |
+| LLM + tool-calling | Groq (`openai/gpt-oss-120b`) | Fast inference, native OpenAI-compatible function-calling |
 | Embeddings | HuggingFace MiniLM-L6-v2 | Lightweight, fast, no API cost |
 | Vector search | FAISS | In-memory, low-latency, right-sized for this KB |
 | Web app | Streamlit | Quick to build and free to host |
@@ -158,7 +165,7 @@ To run the evaluation harness: `python eval.py`
 2. Run Section 1 — it will prompt you for a Groq API key (free at [console.groq.com](https://console.groq.com))
 3. Run all sections top to bottom
 4. Section 4 shows live agent decisions on sample tickets
-5. Section 6 runs the full eval harness and prints accuracy results
+5. Section 6 runs the full eval harness (64 tickets) and prints accuracy, recall, and cost-weighted results
 
 ---
 
@@ -169,7 +176,7 @@ support-triage-agent/
 ├── app.py                       # Streamlit web app
 ├── agent.py                     # Tool schemas, system prompt, policy guard, run_agent()
 ├── kb.py                        # Knowledge base + FAISS retrieval
-├── eval.py                      # Evaluation harness (21 labeled tickets)
+├── eval.py                      # Evaluation harness (64 labeled tickets, cost-weighted scoring)
 ├── Support_Triage_Agent.ipynb   # Original notebook — KB, agent loop, eval
 ├── requirements.txt
 └── README.md
@@ -179,16 +186,14 @@ support-triage-agent/
 
 ## ⚠️ Limitations
 
-- **Policy guard uses keyword rules.** It is enforced in code, but an unusually phrased security or legal ticket that avoids the keywords could still slip past it.
-- **Small eval set** (21 tickets), so per-class accuracy can swing a lot from one or two tickets
+- **Policy guard uses keyword rules.** It is enforced in code, and the 64-ticket eval now specifically tests adversarial phrasing around it — but an even more unusual phrasing could still slip past it.
 - **Synthetic, hand-labeled data** — tickets and labels were written by one person; a production system would validate on real historical tickets with multiple labelers
 - **Small hand-built knowledge base** (14 docs), not real support documentation
 - **One tool call per ticket** and no conversation memory — `ask_clarifying_question` ends the interaction instead of continuing it
-- **Metrics predate the current setup** (see "What changed since these numbers")
 
 ## 🔧 What I'd build next
 
-- Re-run the eval on the current model and prompt, and update the results above
+- Validate against a few hundred real (or more rigorously adversarial) tickets, reviewed by more than one labeler
 - Replace keyword rules with a small classifier, or combine both, for the policy check
 - Multi-turn handling, so a clarifying question continues the loop when the customer replies
 - Confidence calibration — compare the model's self-reported `confidence` against actual correctness
@@ -200,8 +205,8 @@ support-triage-agent/
 - **Real tool-calling** — the model explicitly selects from a defined function set, not free text that gets parsed afterward
 - **Grounding by design** — retrieval is always done by code before the model decides anything
 - **Safety in code, not just prompts** — high-stakes escalation is checked by a rule the model can't skip
-- **A genuine eval harness** — labeled tickets, real metrics, and two separate scoring criteria chosen because they're not equally important
-- **Honest iteration** — the 57.1% overall accuracy is documented and diagnosed, not hidden. Understanding *why* a system fails is the actual engineering skill.
+- **A genuine eval harness** — labeled tickets, real metrics, cost-weighted scoring, and adversarial test cases chosen because not every failure mode costs the same
+- **Honest iteration** — the original 57.1% overall accuracy was documented and diagnosed, not hidden, and the fix was tested against a harder, adversarial set rather than just re-measured on the same easy one. Understanding *why* a system fails — and proving a fix actually holds under pressure — is the real engineering skill.
 
 ---
 
