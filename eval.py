@@ -4,6 +4,9 @@ eval.py — the test. Runs the agent on labelled tickets and reports:
   - hard-trigger escalation recall (security / legal) — the high-stakes metric
   - policy guard false-trigger rate — how often the regex guard fires on
     tickets that didn't actually need hard-trigger escalation
+  - cost-weighted score — not all errors are equal; missing a hard-trigger
+    escalation is far worse than a false escalation (which just costs human
+    attention / alert fatigue)
 Both accuracy metrics are shown for the model alone AND with the code policy
 guard, so we can see what the guard adds.
 
@@ -136,6 +139,35 @@ def false_trigger_rate():
     return len(false_positives) / len(triggered), false_positives
 
 
+def ticket_cost(row):
+    """Cost of this ticket's outcome, not just right/wrong.
+    Missing a hard-trigger escalation (security/legal) is the worst case.
+    A false escalation is cheaper but still costs human attention (alert fatigue)."""
+    is_hard = row["expected_team"] in HARD_TRIGGER_TEAMS
+    expected, final = row["expected_action"], row["final_action"]
+
+    if expected == "escalate" and final != "escalate":
+        return 10 if is_hard else 3      # missed escalation
+    if expected != "escalate" and final == "escalate":
+        return 2                          # false escalation -> alert fatigue
+    if expected == "escalate" and final == "escalate" and row["final_team"] != row["expected_team"]:
+        return 1                          # escalated, but wrong team
+    if expected != final:
+        return 1                          # draft vs clarify mix-up
+    return 0
+
+
+def cost_weighted_score(df):
+    df = df.copy()
+    df["cost"] = df.apply(ticket_cost, axis=1)
+    return {
+        "total_cost": df["cost"].sum(),
+        "mean_cost_per_ticket": df["cost"].mean(),
+        "missed_hard_escalations": int(((df["expected_team"].isin(HARD_TRIGGER_TEAMS)) & (df["final_action"] != "escalate")).sum()),
+        "false_escalations": int(((df["expected_action"] != "escalate") & (df["final_action"] == "escalate")).sum()),
+    }
+
+
 def summarise(df):
     hard = df[df["expected_team"].isin(HARD_TRIGGER_TEAMS)]
     return {
@@ -159,6 +191,11 @@ if __name__ == "__main__":
     print(f"policy_guard_false_trigger_rate {ft_rate:.1%}  ({len(ft_examples)} false positives)")
     for text, exp_team in ft_examples:
         print(f"  FALSE TRIGGER (expected {exp_team or 'no escalation'}): {text[:70]}...")
+    print("=" * 60)
+
+    print("\nCost-weighted score (not all errors are equal):")
+    for name, value in cost_weighted_score(df).items():
+        print(f"  {name:28s} {value}")
     print("=" * 60)
 
     print("\nAccuracy by expected action (final):")
