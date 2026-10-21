@@ -2,7 +2,10 @@
 
 **An agentic tool-calling system that routes support tickets — not just answers them.**
 
-🔗 **[Live demo →](https://support-triage-agent-3rdpekkbtyma2bhjafya9z.streamlit.app/)**  ·  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mistyvisty/support-triage-agent/blob/main/Support_Triage_Agent.ipynb)
+🔗 **[Live demo →](https://support-triage-agent-3rdpekkbtyma2bhjafya9z.streamlit.app/)**  ·  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mistyvisty/support-triage-agent/blob/main/Support_Triage_Agent.ipynb) . ## Write-ups
+- [Part 1 — I Built an AI Agent That Knows When Not to Answer](https://medium.com/@bhardwajpreeti357/i-built-an-ai-agent-that-knows-when-not-to-answer-%EF%B8%8F-804776968ff9)
+- [Part 2 — How I Improved My AI Agent's Ticket Routing Accuracy from 57% to 86%](https://medium.com/@bhardwajpreeti357/how-i-improved-my-ai-agents-ticket-routing-accuracy-from-57-to-86-part-2-27d87f5b9d16)
+
 
 > Built by [Preeti Bhardwaj](https://mistyvisty.github.io/) · Stack: Python · Groq SDK (native tool-calling) · FAISS · MiniLM · Streamlit
 
